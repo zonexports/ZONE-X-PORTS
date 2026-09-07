@@ -1940,10 +1940,59 @@ const s = {
                 
                 if(a==='view-tour-players') { const t=(await get(ref(db,`tournaments/${id}`))).val(); getElement('registeredPlayersTournamentName').textContent = t.name; let h=''; if(t.registeredPlayers) { Object.entries(t.registeredPlayers).forEach(([uid, pd]) => { const inGameName = pd.gameName || pd.teamDetails?.[0]?.gameName || '-'; const inGameUid = pd.gameUid || pd.teamDetails?.[0]?.gameUid || '-'; h+=`<tr><td>${fullUserDataCache[uid]?.email||uid}</td><td>${inGameName}</td><td>${inGameUid}</td><td>${uid}</td><td>${formatDate(pd.timestamp)}</td></tr>`; }); } getElement('registeredPlayersTableBody').innerHTML=h||`<tr><td colspan="5">No registrations yet</td></tr>`; getModalInstance(getElement('registeredPlayersModal')).show(); }
 
-                if(a==='app-wd') { currentWithdrawalAction={id, type:'app'}; const wdSnap=await get(ref(db,`withdrawals/${id}`)); if(!wdSnap.exists()) { alert('Withdrawal record not found.'); showLoader(false); return; } getElement('withdrawalDetailAmount').textContent=wdSnap.val().amount; getElement('withdrawalApproveNoteDiv').style.display='block'; getElement('withdrawalRejectReasonDiv').style.display='none'; getElement('rejectWithdrawalBtn').style.display='none'; getElement('approveWithdrawalBtn').style.display='block'; getModalInstance(getElement('withdrawalActionModal')).show(); }
+               if(a==='app-wd') { 
+    currentWithdrawalAction=id; 
+    const wdSnap=await get(ref(db, `withdrawals/${id}`)); 
+    if(wdSnap.exists()){ 
+        const w=wdSnap.val(); 
+        await update(ref(db, `withdrawals/${id}`), {status:'completed', processedAt:serverTimestamp()}); 
+        
+        // User history me withdrawal status sync karna
+        try {
+            const userTxRef = ref(db, `users/${w.userId}/transactions`);
+            const txSnap = await get(userTxRef);
+            if (txSnap.exists()) {
+                const txData = txSnap.val();
+                for (let txKey in txData) {
+                    if (txData[txKey].refId === id || txKey === id) {
+                        await update(ref(db, `users/${w.userId}/transactions/${txKey}`), { status: 'completed' });
+                    }
+                }
+            }
+        } catch(err) { console.error(err); }
+
+        loadWithdrawals('pending'); 
+    } 
+}
                 if(a==='rej-wd') { currentWithdrawalAction={id, type:'rej'}; const wdSnap2=await get(ref(db,`withdrawals/${id}`)); if(!wdSnap2.exists()) { alert('Withdrawal record not found.'); showLoader(false); return; } getElement('withdrawalDetailAmount').textContent=wdSnap2.val().amount; getElement('withdrawalApproveNoteDiv').style.display='none'; getElement('withdrawalRejectReasonDiv').style.display='block'; getElement('approveWithdrawalBtn').style.display='none'; getElement('rejectWithdrawalBtn').style.display='block'; getModalInstance(getElement('withdrawalActionModal')).show(); }
 
-                if(a==='app-dp') { showLoader(true); const uid=btn.dataset.uid, amt=Number(btn.dataset.amt); const uRef=ref(db, `users/${uid}`); const uD=(await get(uRef)).val(); await update(uRef, {balance: (uD.balance||0)+amt}); await update(ref(db, `deposits/${id}`), {status:'completed', processedAt:serverTimestamp()}); loadDepositRequests('pending'); showLoader(false); }
+                if(a==='app-dp') { 
+    showLoader(true); 
+    const uid = btn.dataset.uid, amt = Number(btn.dataset.amt); 
+    
+    // 1. User Balance Badhana
+    await update(ref(db, `users/${uid}`), {balance: (fullUserDataCache[uid]?.balance||0)+amt}); 
+    
+    // 2. Main Deposits Node me Status 'completed' karna
+    await update(ref(db, `deposits/${id}`), {status:'completed', processedAt:serverTimestamp()}); 
+    
+    // 3. User ki Personal History Node me bhi Status 'completed' karna
+    try {
+        const userTxRef = ref(db, `users/${uid}/transactions`);
+        const txSnap = await get(userTxRef);
+        if (txSnap.exists()) {
+            const txData = txSnap.val();
+            for (let txKey in txData) {
+                if (txData[txKey].refId === id || txKey === id) {
+                    await update(ref(db, `users/${uid}/transactions/${txKey}`), { status: 'completed' });
+                }
+            }
+        }
+    } catch(err) { console.error("User history update error:", err); }
+
+    loadDepositRequests('pending'); 
+    showLoader(false); 
+}
                 if(a==='rej-dp') { showLoader(true); await update(ref(db, `deposits/${id}`), {status:'rejected', processedAt:serverTimestamp()}); loadDepositRequests('pending'); showLoader(false); }
                 
                 if(a === 'app-ref') {
